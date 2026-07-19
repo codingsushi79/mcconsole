@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import threading
 import time
@@ -27,6 +28,16 @@ PROMPT_STYLE = Style.from_dict(MCCONSOLE_STYLE)
 ANSI_GREEN = "\033[92m"
 ANSI_CYAN = "\033[36m"
 ANSI_RESET = "\033[0m"
+
+# Strips ASCII control characters (including ESC) from text that
+# ultimately gets embedded in a raw-ANSI print() call, so a malicious
+# server can't smuggle terminal escape sequences into the user's
+# terminal via chat text or its own reported server address.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_for_terminal(text: str) -> str:
+    return _CONTROL_CHARS_RE.sub("", text)
 
 
 class Session:
@@ -105,11 +116,19 @@ def warn(text: str) -> None:
 
 def _print_chat(text: str) -> None:
     """Called from GameConnection's background reader thread whenever the
-    mod pushes a live chat/log line. Uses plain print() (not
-    print_formatted_text) for the same reason _watch_for_server_changes
-    does: it only interleaves safely with patch_stdout(), which main()
-    wraps the whole session in."""
-    print(f"{ANSI_CYAN}{PROMPT_ICON} {text}{ANSI_RESET}")
+    mod pushes a live chat/log line. Plain print() here (not
+    print_formatted_text) is deliberate: print_formatted_text finds "the
+    currently running Application" via contextvars, which a plain
+    threading.Thread doesn't inherit from the thread that started it, so
+    from here it can't see (or safely print above) the active prompt.
+    patch_stdout() instead patches sys.stdout itself — a real global, so
+    it works correctly from any thread — which is why main() wraps the
+    whole session in patch_stdout(raw=True). `raw=True` is required for
+    these ANSI codes to survive at all (the default strips/escapes them),
+    which is also why chat text is sanitized first: raw mode means
+    nothing stops embedded escape sequences from reaching the terminal
+    otherwise."""
+    print(f"{ANSI_CYAN}{PROMPT_ICON} {_sanitize_for_terminal(text)}{ANSI_RESET}")
 
 
 def wait_for_connection(session: Session) -> None:
@@ -136,10 +155,9 @@ def _watch_for_server_changes(session: Session, connection: GameConnection) -> N
     tree + prompt to match, instead of leaving them stuck on whatever was
     true at the moment mcconsole first connected.
 
-    Uses plain print() (not print_formatted_text) since it's called from
-    a background thread while a prompt may be actively running — that
-    only interleaves safely with patch_stdout(), which main() wraps the
-    whole session in.
+    Uses plain print() (not print_formatted_text) — see _print_chat for
+    why. Only interleaves safely with patch_stdout(), which main() wraps
+    the whole session in.
     """
     while session.connection is connection and connection.connected:
         time.sleep(WATCH_INTERVAL_SECONDS)
@@ -160,7 +178,7 @@ def _watch_for_server_changes(session: Session, connection: GameConnection) -> N
             return
         session.tree_index = CommandTreeIndex(root)
         session.note_server_change(label)
-        print(f"{ANSI_GREEN}{PROMPT_ICON} connected to {label}{ANSI_RESET}")
+        print(f"{ANSI_GREEN}{PROMPT_ICON} connected to {_sanitize_for_terminal(label)}{ANSI_RESET}")
 
 
 def start_watcher(session: Session) -> None:
@@ -237,7 +255,7 @@ def main() -> int:
     success(f"{PROMPT_ICON} connected ({session.server_label})")
     start_watcher(session)
 
-    with patch_stdout():
+    with patch_stdout(raw=True):
         while True:
             try:
                 text = session.prompt_session.prompt(lambda: build_prompt(session))
