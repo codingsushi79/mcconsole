@@ -133,15 +133,67 @@ def install_cli(venv_dir: Path, src_dir: Path) -> None:
     run([pip, "install", "--quiet", str(src_dir)])
 
 
-def add_to_path(bin_dir: Path) -> None:
-    export_line = f'export PATH="{{bin_dir}}:$PATH"'
+def _broadcast_environment_change() -> None:
+    # Lets Explorer and newly-launched processes pick up the PATH change
+    # without a full logoff. Terminals already open still need reopening.
+    import ctypes
 
-    if os.name == "nt":
+    HWND_BROADCAST = 0xFFFF
+    WM_SETTINGCHANGE = 0x001A
+    SMTO_ABORTIFHUNG = 0x0002
+    result = ctypes.c_long()
+    ctypes.windll.user32.SendMessageTimeoutW(
+        HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, ctypes.byref(result)
+    )
+
+
+def _add_to_path_windows(bin_dir: Path) -> None:
+    import winreg
+
+    bin_dir_str = str(bin_dir)
+
+    try:
+        response = input(f"Add {{bin_dir_str}} to your user PATH now? [Y/n] ").strip().lower()
+    except EOFError:
+        response = ""
+    if response not in ("", "y", "yes"):
         print()
-        print("Add the following directory to your PATH (e.g. via System")
-        print("Properties -> Environment Variables), then open a new terminal:")
-        print(f"  {{bin_dir}}")
+        print("Skipped. Add this directory to your PATH manually if you change your mind:")
+        print(f"  {{bin_dir_str}}")
         return
+
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+    except OSError as exc:
+        print(f"Could not open the registry to update PATH ({{exc}}).")
+        print("Add this directory to your PATH manually:")
+        print(f"  {{bin_dir_str}}")
+        return
+
+    with key:
+        try:
+            current, value_type = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            current, value_type = "", winreg.REG_EXPAND_SZ
+
+        entries = [e for e in current.split(";") if e]
+        if bin_dir_str in entries:
+            print(f"{{bin_dir_str}} is already on your PATH.")
+            return
+
+        new_value = ";".join(entries + [bin_dir_str])
+        winreg.SetValueEx(key, "Path", 0, value_type, new_value)
+
+    _broadcast_environment_change()
+    print(f"Added {{bin_dir_str}} to your user PATH. Open a new terminal for it to take effect.")
+
+
+def add_to_path(bin_dir: Path) -> None:
+    if os.name == "nt":
+        _add_to_path_windows(bin_dir)
+        return
+
+    export_line = f'export PATH="{{bin_dir}}:$PATH"'
 
     shell = os.environ.get("SHELL", "")
     if "zsh" in shell:
