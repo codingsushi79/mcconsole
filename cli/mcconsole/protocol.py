@@ -3,12 +3,21 @@
 Kept deliberately synchronous and blocking: the socket is loopback-only
 and round trips are sub-millisecond in practice, so there's no real need
 for asyncio here, and it keeps the prompt_toolkit integration simple.
+
+The wire protocol has no request-ID correlation — it assumes exactly one
+request is ever in flight at a time. Tab-completion runs on a background
+thread (see completer.py) so it doesn't block the terminal UI while
+waiting on the game, which means a completion request and e.g. an
+`execute` call from the main thread could otherwise race on the same
+socket. Every public method below takes `_lock` for its whole
+send-then-receive round trip to serialize that.
 """
 
 from __future__ import annotations
 
 import json
 import socket
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +52,7 @@ class GameConnection:
         self.timeout = timeout
         self._sock: socket.socket | None = None
         self._buffer = b""
+        self._lock = threading.Lock()
 
     def connect(self) -> None:
         sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
@@ -90,15 +100,17 @@ class GameConnection:
         return json.loads(line.decode("utf-8"))
 
     def ping(self) -> str:
-        self._send({"type": "ping"})
-        response = self._recv_line()
+        with self._lock:
+            self._send({"type": "ping"})
+            response = self._recv_line()
         if response.get("type") != "pong":
             raise RuntimeError(f"Unexpected ping response: {response}")
         return response.get("connected_server", "unknown")
 
     def execute(self, text: str) -> ExecuteResult:
-        self._send({"type": "execute", "text": text})
-        response = self._recv_line()
+        with self._lock:
+            self._send({"type": "execute", "text": text})
+            response = self._recv_line()
         if response.get("type") == "error":
             return ExecuteResult(success=False, feedback=response.get("message", "error"))
         return ExecuteResult(
@@ -107,8 +119,9 @@ class GameConnection:
         )
 
     def complete(self, text: str) -> list[Suggestion]:
-        self._send({"type": "complete", "text": text})
-        response = self._recv_line()
+        with self._lock:
+            self._send({"type": "complete", "text": text})
+            response = self._recv_line()
         if response.get("type") == "error":
             return []
         return [
@@ -117,8 +130,9 @@ class GameConnection:
         ]
 
     def tree(self) -> dict[str, Any] | None:
-        self._send({"type": "tree"})
-        response = self._recv_line()
+        with self._lock:
+            self._send({"type": "tree"})
+            response = self._recv_line()
         if response.get("type") == "error":
             return None
         return response.get("root")

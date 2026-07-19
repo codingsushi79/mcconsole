@@ -15,6 +15,14 @@ MCCONSOLE_STYLE = {
     "mcconsole.argument": "fg:#e8c15e",
     "mcconsole.error": "fg:#ff6b6b",
     "mcconsole.slash": "fg:#888888",
+    # Prompt
+    "mcconsole.prompt.icon": "fg:#59d9a5 bold",
+    "mcconsole.prompt.server": "fg:#e8c15e bold",
+    "mcconsole.prompt.arrow": "fg:#59d9a5",
+    # Status lines (connecting/reconnecting/etc.)
+    "mcconsole.info": "fg:#7aa2f7",
+    "mcconsole.success": "fg:#59d9a5 bold",
+    "mcconsole.warn": "fg:#e8c15e",
 }
 
 

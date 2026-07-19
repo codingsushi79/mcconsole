@@ -5,7 +5,9 @@ import sys
 import time
 from pathlib import Path
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import PromptSession, print_formatted_text
+from prompt_toolkit.completion import ThreadedCompleter
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 
@@ -16,6 +18,9 @@ from mcconsole.protocol import GameConnection, NotConnectedError
 
 HISTORY_FILE = Path.home() / ".mcconsole_history"
 POLL_INTERVAL_SECONDS = 2.0
+PROMPT_ICON = "⛏"
+
+PROMPT_STYLE = Style.from_dict(MCCONSOLE_STYLE)
 
 
 class Session:
@@ -27,6 +32,7 @@ class Session:
         self.minecraft_dir = minecraft_dir
         self.connection: GameConnection | None = None
         self.tree_index = CommandTreeIndex(None)
+        self.server_label = "mcconsole"
 
     def get_connection(self) -> GameConnection | None:
         return self.connection
@@ -43,7 +49,7 @@ class Session:
         connection = GameConnection("127.0.0.1", port)
         try:
             connection.connect()
-            connection.ping()
+            self.server_label = connection.ping()
         except (NotConnectedError, OSError, TimeoutError):
             connection.close()
             return False
@@ -60,10 +66,30 @@ class Session:
         self.tree_index = CommandTreeIndex(None)
 
 
+def info(text: str) -> None:
+    print_formatted_text(FormattedText([("class:mcconsole.info", text)]), style=PROMPT_STYLE)
+
+
+def success(text: str) -> None:
+    print_formatted_text(FormattedText([("class:mcconsole.success", text)]), style=PROMPT_STYLE)
+
+
+def warn(text: str) -> None:
+    print_formatted_text(FormattedText([("class:mcconsole.warn", text)]), style=PROMPT_STYLE)
+
+
 def wait_for_connection(session: Session) -> None:
-    print("mcconsole: waiting for a running Minecraft instance with the MCConsole mod...")
+    info(f"{PROMPT_ICON} waiting for a running Minecraft instance with the MCConsole mod...")
     while not session.try_connect():
         time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def build_prompt(session: Session) -> list[tuple[str, str]]:
+    return [
+        ("class:mcconsole.prompt.icon", f"{PROMPT_ICON} "),
+        ("class:mcconsole.prompt.server", session.server_label),
+        ("class:mcconsole.prompt.arrow", " ❯ "),
+    ]
 
 
 def main() -> int:
@@ -78,46 +104,44 @@ def main() -> int:
 
     session = Session(args.minecraft_dir)
     wait_for_connection(session)
+    success(f"{PROMPT_ICON} connected ({session.server_label})")
 
-    server_label = session.connection.ping() if session.connection else "unknown"
-    print(f"mcconsole: connected ({server_label})")
-
-    prompt_style = Style.from_dict(MCCONSOLE_STYLE)
     prompt_session: PromptSession = PromptSession(
         history=FileHistory(str(HISTORY_FILE)),
-        completer=GameCompleter(session.get_connection),
+        completer=ThreadedCompleter(GameCompleter(session.get_connection)),
         lexer=GameLexer(session.get_tree_index),
-        style=prompt_style,
+        style=PROMPT_STYLE,
     )
 
     while True:
         try:
-            text = prompt_session.prompt("mc> ")
+            text = prompt_session.prompt(lambda: build_prompt(session))
         except (EOFError, KeyboardInterrupt):
-            print("\nmcconsole: bye")
+            print_formatted_text(
+                FormattedText([("class:mcconsole.info", "\nmcconsole: bye")]), style=PROMPT_STYLE
+            )
             return 0
 
         if not text.strip():
             continue
 
         if session.connection is None or not session.connection.connected:
-            print("mcconsole: disconnected, reconnecting...")
+            warn(f"{PROMPT_ICON} disconnected, reconnecting...")
             session.disconnect()
             wait_for_connection(session)
-            print("mcconsole: reconnected")
+            success(f"{PROMPT_ICON} reconnected ({session.server_label})")
 
         try:
             result = session.connection.execute(text)
         except NotConnectedError:
-            print("mcconsole: lost connection to the game, reconnecting...")
+            warn(f"{PROMPT_ICON} lost connection to the game, reconnecting...")
             session.disconnect()
             wait_for_connection(session)
-            print("mcconsole: reconnected — resend your command")
+            success(f"{PROMPT_ICON} reconnected ({session.server_label}) — resend your command")
             continue
 
-        color = "\033[92m" if result.success else "\033[91m"
-        reset = "\033[0m"
-        print(f"{color}{result.feedback}{reset}")
+        style_class = "class:mcconsole.success" if result.success else "class:mcconsole.error"
+        print_formatted_text(FormattedText([(style_class, result.feedback)]), style=PROMPT_STYLE)
 
 
 if __name__ == "__main__":

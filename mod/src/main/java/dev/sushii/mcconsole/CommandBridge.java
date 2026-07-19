@@ -172,27 +172,43 @@ public class CommandBridge {
                 ClientSuggestionProvider source = client.getConnection().getSuggestionsProvider();
                 ParseResults<ClientSuggestionProvider> parsed =
                         client.getConnection().getCommands().parse(parseText, source);
-                Suggestions suggestions = client.getConnection().getCommands()
+
+                // getCompletionSuggestions() can be genuinely slow for complex
+                // commands (long entity selectors, NBT paths, etc). Blocking
+                // this render-thread task on .join() until it finishes would
+                // stall every frame — and therefore the whole game — for that
+                // long. Attach a continuation instead and let this task (and
+                // the render thread) move on; the response goes out whenever
+                // the future actually completes, from whatever thread that is.
+                client.getConnection().getCommands()
                         .getCompletionSuggestions(parsed)
-                        .join();
-
-                JsonArray suggestionArray = new JsonArray();
-                suggestions.getList().forEach(s -> {
-                    JsonObject entry = new JsonObject();
-                    entry.addProperty("text", s.getText());
-                    entry.addProperty("start", s.getRange().getStart() + offset);
-                    entry.addProperty("end", s.getRange().getEnd() + offset);
-                    suggestionArray.add(entry);
-                });
-
-                JsonObject response = new JsonObject();
-                response.addProperty("type", "completion");
-                response.add("suggestions", suggestionArray);
-                send(response);
+                        .whenComplete((suggestions, throwable) -> {
+                            if (throwable != null) {
+                                sendError("Completion failed: " + throwable.getMessage());
+                                return;
+                            }
+                            send(suggestionsToResponse(suggestions, offset));
+                        });
             } catch (Exception e) {
                 sendError("Completion failed: " + e.getMessage());
             }
         });
+    }
+
+    private static JsonObject suggestionsToResponse(Suggestions suggestions, int offset) {
+        JsonArray suggestionArray = new JsonArray();
+        suggestions.getList().forEach(s -> {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("text", s.getText());
+            entry.addProperty("start", s.getRange().getStart() + offset);
+            entry.addProperty("end", s.getRange().getEnd() + offset);
+            suggestionArray.add(entry);
+        });
+
+        JsonObject response = new JsonObject();
+        response.addProperty("type", "completion");
+        response.add("suggestions", suggestionArray);
+        return response;
     }
 
     private void handleTree() {
