@@ -159,9 +159,19 @@ public class CommandBridge {
             }
 
             try {
+                // Brigadier's dispatcher parses raw command text ("gamemode ..."),
+                // not chat-style text with a leading slash ("/gamemode ..."),
+                // same as handleExecute below. Suggestion ranges come back
+                // relative to whatever we hand the parser, so re-offset them
+                // by the character we stripped to keep them aligned with the
+                // original (slash-included) text the CLI is tracking.
+                boolean hadSlash = text.startsWith("/");
+                String parseText = hadSlash ? text.substring(1) : text;
+                int offset = hadSlash ? 1 : 0;
+
                 ClientSuggestionProvider source = client.getConnection().getSuggestionsProvider();
                 ParseResults<ClientSuggestionProvider> parsed =
-                        client.getConnection().getCommands().parse(text, source);
+                        client.getConnection().getCommands().parse(parseText, source);
                 Suggestions suggestions = client.getConnection().getCommands()
                         .getCompletionSuggestions(parsed)
                         .join();
@@ -170,8 +180,8 @@ public class CommandBridge {
                 suggestions.getList().forEach(s -> {
                     JsonObject entry = new JsonObject();
                     entry.addProperty("text", s.getText());
-                    entry.addProperty("start", s.getRange().getStart());
-                    entry.addProperty("end", s.getRange().getEnd());
+                    entry.addProperty("start", s.getRange().getStart() + offset);
+                    entry.addProperty("end", s.getRange().getEnd() + offset);
                     suggestionArray.add(entry);
                 });
 

@@ -88,6 +88,18 @@ This isn't an issue in the GitHub Actions workflow (`actions/setup-java`
 with `java-version: 25` sets `JAVA_HOME` correctly), only for local
 builds on a machine whose default `java` is older than 25.
 
+## `handleComplete` didn't strip the leading `/`
+
+`handleExecute` always stripped a leading `/` before handing text to
+Brigadier (`sendCommand` expects raw command text), but `handleComplete`
+didn't — so every tab-completion request from the CLI (which sends
+`document.text_before_cursor`, always including the `/`) silently
+returned zero suggestions. Confirmed live against a running game: `complete("gamemode ")`
+returned real suggestions, `complete("/gamemode ")` returned none. Fixed
+by stripping the leading `/` before parsing and re-offsetting the
+returned suggestion ranges by 1 so they still line up with the
+CLI-tracked (slash-included) cursor position.
+
 ## Before your next build
 
 Re-check `gradle.properties` against https://fabricmc.net/develop (or

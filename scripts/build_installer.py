@@ -6,9 +6,9 @@ package) as a base64-encoded zip and embeds it in a small bootstrap script.
 Usage:
     python3 scripts/build_installer.py [--output PATH]
 
-Same spirit as ezinstaller's own ezi.py bootstrap: one file an end user can
-download and run with `python3 mcconsole-installer.py`, no repo checkout or
-network access to GitHub required at install time.
+One file an end user can `curl` down and run with `python3
+mcconsole-installer.py`, no repo checkout or further network access to
+GitHub required at install time.
 """
 
 from __future__ import annotations

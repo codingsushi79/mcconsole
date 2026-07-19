@@ -10,7 +10,6 @@ currently connected to.
 mod/         Fabric client-side mod (Java, Gradle)
 cli/         mcconsole terminal client (Python, prompt_toolkit)
 scripts/     build_installer.py — bundles cli/ into a single-file installer
-install.fezi ezinstaller script for installing the CLI
 ```
 
 ## How it fits together
@@ -100,44 +99,51 @@ successfully in a real Fabric install; a full CLI-attached pass against
 a live game (tab-completion, syntax highlighting, real command feedback)
 is still open — see "Live-game testing" above.
 
-## Installing the CLI via ezinstaller
+## Installing the CLI
 
-Once this repo is live at `github.com/codingsushi79/mcconsole`:
+`mcconsole-installer.py` is a single, standalone file — the whole
+`cli/mcconsole` package plus `pyproject.toml`, base64-encoded and embedded
+in a small bootstrap script (built by `scripts/build_installer.py`, and
+attached to every GitHub Release by `.github/workflows/cli-installer-release.yml`,
+see "Release workflows" below). No repo checkout needed, just Python 3.10+.
+
+Once this repo has a release, install with:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/codingsushi79/ezinstaller/main/ezi.py \
-  | python3 - https://raw.githubusercontent.com/codingsushi79/mcconsole/main/install.fezi
+curl -fsSL https://github.com/codingsushi79/mcconsole/releases/latest/download/mcconsole-installer.py \
+  | python3 -
 ```
 
-Until then, test locally from the repo root:
+Or download it first if you'd rather read it before running it:
 
 ```
-ezi install.fezi --dry-run
-ezi install.fezi
+curl -fsSL -o mcconsole-installer.py \
+  https://github.com/codingsushi79/mcconsole/releases/latest/download/mcconsole-installer.py
+python3 mcconsole-installer.py
 ```
 
-The installer only handles the CLI — you still need to build the mod
-jar (or grab it from a release once one exists) and drop it into your
-`mods` folder yourself; `install.fezi` prints a reminder about this at
-the end of the run.
+Both forms accept an optional install directory argument (default
+`~/apps/mcconsole`, prompted for interactively when run as a normal file;
+piped installs skip the prompt and use the default unless you pass one
+explicitly, e.g. `python3 mcconsole-installer.py ~/somewhere` or
+`curl ... | python3 - ~/somewhere`).
 
-## Single-file CLI installer
+It creates a venv under the install directory, installs `prompt_toolkit`
+and the CLI into it, and either appends the venv's `bin/` to your shell
+profile's `PATH` or prints the `export` line to add yourself.
 
-`scripts/build_installer.py` bundles the whole `cli/mcconsole` package
-plus `pyproject.toml` into one standalone script, `mcconsole-installer.py`
-(base64-encoded zip embedded in a small bootstrap, same idea as
-ezinstaller's own `ezi.py`):
+Until a release exists, build and test it locally from the repo root:
 
 ```
 python3 scripts/build_installer.py
-python3 mcconsole-installer.py [install_dir]
+python3 mcconsole-installer.py
 ```
 
-It creates a venv under the install directory (default `~/apps/mcconsole`),
-installs `prompt_toolkit` and the CLI into it, and either appends the venv's
-`bin/` to your shell profile's `PATH` or prints the `export` line to add
-yourself. `mcconsole-installer.py` is a generated artifact (gitignored) —
-regenerate it after any `cli/` change.
+`mcconsole-installer.py` is a generated artifact (gitignored) — regenerate
+it after any `cli/` change. Either way, it only installs the CLI — you
+still need to build the mod jar (or grab it from a release) and drop it
+into your `mods` folder yourself; the installer prints a reminder about
+this at the end of the run.
 
 ## Release workflows
 
