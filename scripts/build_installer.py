@@ -231,7 +231,7 @@ def main() -> None:
     script = render_bootstrap(bundle_bytes)
 
     output_path = Path(args.output).resolve()
-    output_path.write_text(script)
+    output_path.write_text(script, encoding="utf-8")
     output_path.chmod(0o755)
 
     file_count = sum(1 for _ in iter_cli_files())
