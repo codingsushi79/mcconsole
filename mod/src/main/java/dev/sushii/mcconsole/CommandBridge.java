@@ -37,6 +37,16 @@ public class CommandBridge {
     private static final long BUFFER_RETENTION_MS = 5_000;
     private static final List<TimestampedMessage> RECENT_MESSAGES = new CopyOnWriteArrayList<>();
     private static final AtomicBoolean LISTENER_REGISTERED = new AtomicBoolean(false);
+    // While a command's feedback window is open, its result messages are
+    // hidden from the normal in-game chat/HUD — they already show up in
+    // the mcconsole terminal, so echoing them in-game too is just noise.
+    // There's no way to tag which incoming game messages belong to a
+    // given command, so this reuses the same timing window as feedback
+    // capture: only one `execute` can be in flight at a time (the CLI
+    // blocks until it gets a response), so this is safe, but as a
+    // consequence any unrelated system message that happens to arrive
+    // during that ~300ms window gets hidden too.
+    private static volatile long suppressGameMessagesUntilMs = -1;
 
     private record TimestampedMessage(long timestampMs, String text) {
     }
@@ -55,7 +65,7 @@ public class CommandBridge {
                 long now = System.currentTimeMillis();
                 RECENT_MESSAGES.add(new TimestampedMessage(now, messageText.getString()));
                 RECENT_MESSAGES.removeIf(m -> now - m.timestampMs() > BUFFER_RETENTION_MS);
-                return true;
+                return now > suppressGameMessagesUntilMs;
             });
         }
     }
@@ -109,6 +119,7 @@ public class CommandBridge {
             }
 
             long sentAt = System.currentTimeMillis();
+            suppressGameMessagesUntilMs = sentAt + FEEDBACK_WINDOW_MS;
             boolean sendFailed = false;
             String sendFailureMessage = null;
             try {

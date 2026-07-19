@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.completion import ThreadedCompleter
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
 from mcconsole.completer import GameCompleter
@@ -18,9 +20,12 @@ from mcconsole.protocol import GameConnection, NotConnectedError
 
 HISTORY_FILE = Path.home() / ".mcconsole_history"
 POLL_INTERVAL_SECONDS = 2.0
+WATCH_INTERVAL_SECONDS = 3.0
 PROMPT_ICON = "⛏"
 
 PROMPT_STYLE = Style.from_dict(MCCONSOLE_STYLE)
+ANSI_GREEN = "\033[92m"
+ANSI_RESET = "\033[0m"
 
 
 class Session:
@@ -92,6 +97,55 @@ def build_prompt(session: Session) -> list[tuple[str, str]]:
     ]
 
 
+def _watch_for_server_changes(session: Session, connection: GameConnection) -> None:
+    """Runs for the lifetime of one connection, in the background.
+
+    The mod's socket comes up as soon as the game launches, often before
+    you've joined any server, so the first ping can report "unknown".
+    This notices when the connected server actually changes (joining one
+    after attaching, or switching servers) and refreshes the command
+    tree + prompt to match, instead of leaving them stuck on whatever was
+    true at the moment mcconsole first connected.
+
+    Uses plain print() (not print_formatted_text) since it's called from
+    a background thread while a prompt may be actively running — that
+    only interleaves safely with patch_stdout(), which main() wraps the
+    whole session in.
+    """
+    while session.connection is connection and connection.connected:
+        time.sleep(WATCH_INTERVAL_SECONDS)
+        if session.connection is not connection or not connection.connected:
+            return
+        try:
+            label = connection.ping()
+        except NotConnectedError:
+            return
+        if label == session.server_label:
+            continue
+
+        session.server_label = label
+        try:
+            root = connection.tree()
+        except NotConnectedError:
+            return
+        if session.connection is not connection:
+            return
+        session.tree_index = CommandTreeIndex(root)
+        print(f"{ANSI_GREEN}{PROMPT_ICON} connected to {label}{ANSI_RESET}")
+
+
+def start_watcher(session: Session) -> None:
+    connection = session.connection
+    if connection is None:
+        return
+    threading.Thread(
+        target=_watch_for_server_changes,
+        args=(session, connection),
+        daemon=True,
+        name="mcconsole-watch",
+    ).start()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mcconsole", description=__doc__)
     parser.add_argument(
@@ -105,6 +159,7 @@ def main() -> int:
     session = Session(args.minecraft_dir)
     wait_for_connection(session)
     success(f"{PROMPT_ICON} connected ({session.server_label})")
+    start_watcher(session)
 
     prompt_session: PromptSession = PromptSession(
         history=FileHistory(str(HISTORY_FILE)),
@@ -113,35 +168,38 @@ def main() -> int:
         style=PROMPT_STYLE,
     )
 
-    while True:
-        try:
-            text = prompt_session.prompt(lambda: build_prompt(session))
-        except (EOFError, KeyboardInterrupt):
-            print_formatted_text(
-                FormattedText([("class:mcconsole.info", "\nmcconsole: bye")]), style=PROMPT_STYLE
-            )
-            return 0
+    with patch_stdout():
+        while True:
+            try:
+                text = prompt_session.prompt(lambda: build_prompt(session))
+            except (EOFError, KeyboardInterrupt):
+                print_formatted_text(
+                    FormattedText([("class:mcconsole.info", "\nmcconsole: bye")]), style=PROMPT_STYLE
+                )
+                return 0
 
-        if not text.strip():
-            continue
+            if not text.strip():
+                continue
 
-        if session.connection is None or not session.connection.connected:
-            warn(f"{PROMPT_ICON} disconnected, reconnecting...")
-            session.disconnect()
-            wait_for_connection(session)
-            success(f"{PROMPT_ICON} reconnected ({session.server_label})")
+            if session.connection is None or not session.connection.connected:
+                warn(f"{PROMPT_ICON} disconnected, reconnecting...")
+                session.disconnect()
+                wait_for_connection(session)
+                success(f"{PROMPT_ICON} reconnected ({session.server_label})")
+                start_watcher(session)
 
-        try:
-            result = session.connection.execute(text)
-        except NotConnectedError:
-            warn(f"{PROMPT_ICON} lost connection to the game, reconnecting...")
-            session.disconnect()
-            wait_for_connection(session)
-            success(f"{PROMPT_ICON} reconnected ({session.server_label}) — resend your command")
-            continue
+            try:
+                result = session.connection.execute(text)
+            except NotConnectedError:
+                warn(f"{PROMPT_ICON} lost connection to the game, reconnecting...")
+                session.disconnect()
+                wait_for_connection(session)
+                success(f"{PROMPT_ICON} reconnected ({session.server_label}) — resend your command")
+                start_watcher(session)
+                continue
 
-        style_class = "class:mcconsole.success" if result.success else "class:mcconsole.error"
-        print_formatted_text(FormattedText([(style_class, result.feedback)]), style=PROMPT_STYLE)
+            style_class = "class:mcconsole.success" if result.success else "class:mcconsole.error"
+            print_formatted_text(FormattedText([(style_class, result.feedback)]), style=PROMPT_STYLE)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,27 @@ This isn't an issue in the GitHub Actions workflow (`actions/setup-java`
 with `java-version: 25` sets `JAVA_HOME` correctly), only for local
 builds on a machine whose default `java` is older than 25.
 
+## Render-thread freeze on completion, and in-game feedback echo
+
+Two behavioral fixes on top of the above, from live testing:
+
+- `handleComplete` used to call `.join()` on Brigadier's
+  `getCompletionSuggestions()` future *inside* the render-thread task —
+  blocking the whole game until suggestion computation finished, which
+  was very noticeable on longer/more complex commands. Switched to a
+  `.whenComplete(...)` continuation instead, so the render thread just
+  kicks the computation off and moves on; the response goes out whenever
+  it's actually ready. Paired with a CLI-side debounce (`completer.py`)
+  so fast typing doesn't fire a completion request per keystroke.
+- `handleExecute`'s command feedback (success/failure messages from the
+  server) used to also show up in the normal in-game chat/HUD, since the
+  `ClientReceiveMessageEvents.ALLOW_GAME` listener always returned
+  `true`. It now returns `false` for messages arriving inside the active
+  command's `FEEDBACK_WINDOW_MS` window (`suppressGameMessagesUntilMs`),
+  hiding them from in-game display since they already show up in the
+  mcconsole terminal. This is a timing heuristic, not a real
+  per-message tag — see the comment on `suppressGameMessagesUntilMs`.
+
 ## `handleComplete` didn't strip the leading `/`
 
 `handleExecute` always stripped a leading `/` before handing text to
