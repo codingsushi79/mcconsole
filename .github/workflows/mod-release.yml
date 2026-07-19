@@ -1,0 +1,55 @@
+name: Mod release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish/update (required for manual runs, e.g. v0.1.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No tag provided for manual run. Set the 'tag' input." >&2
+            exit 1
+          fi
+
+      - name: Build mod
+        working-directory: mod
+        run: ./gradlew build --no-daemon
+
+      - name: Create/update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body: MCConsole mod release ${{ steps.tag.outputs.tag }}
+          files: mod/build/libs/*.jar

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcconsole"
+version = "0.1.0"
+description = "External terminal with completion and syntax highlighting for the MCConsole Fabric mod"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "codingsushi79" }]
+dependencies = [
+    "prompt_toolkit>=3.0.43",
+]
+
+[project.scripts]
+mcconsole = "mcconsole.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mcconsole*"]

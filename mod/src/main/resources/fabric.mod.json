@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "mcconsole",
+  "version": "${version}",
+  "name": "MCConsole",
+  "description": "Exposes a local socket so an external terminal can execute commands, get tab-completion, and read the command tree for syntax highlighting — client-side only.",
+  "authors": [
+    "codingsushi79"
+  ],
+  "contact": {
+    "homepage": "https://github.com/codingsushi79/mcconsole",
+    "sources": "https://github.com/codingsushi79/mcconsole"
+  },
+  "license": "MIT",
+  "icon": "assets/mcconsole/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "dev.sushii.mcconsole.McConsoleClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "fabric-api": "*",
+    "minecraft": ">=1.21.0"
+  }
+}
