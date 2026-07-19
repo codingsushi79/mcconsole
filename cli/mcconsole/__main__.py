@@ -40,6 +40,27 @@ def _sanitize_for_terminal(text: str) -> str:
     return _CONTROL_CHARS_RE.sub("", text)
 
 
+# Minecraft's own §-code formatting (used throughout chat/log text), mapped
+# to the closest standard ANSI codes. "k" (obfuscated/random-glyph text) has
+# no ANSI equivalent and is just dropped, leaving the underlying characters
+# as plain text.
+_MC_CODE_ANSI = {
+    "0": "\033[30m", "1": "\033[34m", "2": "\033[32m", "3": "\033[36m",
+    "4": "\033[31m", "5": "\033[35m", "6": "\033[33m", "7": "\033[37m",
+    "8": "\033[90m", "9": "\033[94m", "a": "\033[92m", "b": "\033[96m",
+    "c": "\033[91m", "d": "\033[95m", "e": "\033[93m", "f": "\033[97m",
+    "l": "\033[1m", "m": "\033[9m", "n": "\033[4m", "o": "\033[3m", "r": "\033[0m",
+}
+_MC_CODE_RE = re.compile(r"§(.)")
+
+
+def _mc_codes_to_ansi(text: str) -> str:
+    """Must run on already-sanitized text: it introduces new ESC bytes of
+    its own (from the fixed _MC_CODE_ANSI whitelist above), which running
+    _sanitize_for_terminal afterwards would strip right back out."""
+    return _MC_CODE_RE.sub(lambda m: _MC_CODE_ANSI.get(m.group(1).lower(), ""), text)
+
+
 class Session:
     """Holds the current GameConnection (or None while disconnected) so
     the completer/lexer closures can always see the live object without
@@ -128,7 +149,8 @@ def _print_chat(text: str) -> None:
     which is also why chat text is sanitized first: raw mode means
     nothing stops embedded escape sequences from reaching the terminal
     otherwise."""
-    print(f"{ANSI_CYAN}{PROMPT_ICON} {_sanitize_for_terminal(text)}{ANSI_RESET}")
+    colored = _mc_codes_to_ansi(_sanitize_for_terminal(text))
+    print(f"{ANSI_CYAN}{PROMPT_ICON} {colored}{ANSI_RESET}")
 
 
 def wait_for_connection(session: Session) -> None:
