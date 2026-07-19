@@ -14,9 +14,27 @@ repositories {
     // Add repositories here if you need to depend on other mods.
 }
 
+// Neither Yarn nor Mojang's own client_mappings exist for this Minecraft
+// version — because there's nothing to map: the client jar ships
+// unobfuscated (real Mojang class/method names already), so Fabric's own
+// "intermediary" for it is a no-op identity mapping
+// (net.fabricmc:intermediary:0.0.0, empty mapping table). Loom's source
+// remapper hard-requires a namespace literally called "named" though, so
+// this generates a local jar with the same (empty/identity) mapping table
+// under that namespace name instead of fetching one — there's nothing to
+// download since there's no real mapping data involved. See the note in
+// gradle.properties.
+def identityMappingsJar = file("$buildDir/generated/identity-named-mappings.jar")
+identityMappingsJar.parentFile.mkdirs()
+new java.util.zip.ZipOutputStream(new FileOutputStream(identityMappingsJar)).withCloseable { zos ->
+    zos.putNextEntry(new java.util.zip.ZipEntry("mappings/mappings.tiny"))
+    zos.write("tiny\t2\t0\tofficial\tnamed\tintermediary\n".getBytes("UTF-8"))
+    zos.closeEntry()
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    mappings files(identityMappingsJar)
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 }

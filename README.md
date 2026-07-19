@@ -33,36 +33,44 @@ exact protocol if you want to build another client against it.
 
 ```
 cd mod
-gradle wrapper --gradle-version 8.12   # only needed once, see mod/BUILD_NOTES.md
 ./gradlew build
 ```
+
+(`gradle/wrapper/gradle-wrapper.jar` is already committed; see
+`mod/BUILD_NOTES.md` if you ever need to regenerate it.)
 
 Output jar lands in `mod/build/libs/`. Drop it into your Fabric `mods`
 folder (alongside Fabric API) and launch the game once.
 
 **Before your first real build**, check `mod/gradle.properties` against
-whatever's current on https://fabricmc.net/develop — Minecraft version,
-Yarn mappings, Loader, and Fabric API versions all move fast, and the
-values committed here will go stale. Also skim `CommandBridge.java` —
-the Yarn method names it uses (`sendChatCommand`, `getCommandSource`,
-`getCommandDispatcher`, etc.) were written against Yarn ~1.21 mappings
-and occasionally get renamed; your IDE will flag anything that's
-drifted once Loom is applied.
+whatever's current on https://fabricmc.net/develop (or `meta.fabricmc.net`
+directly — the marketing page itself doesn't expose raw version numbers) —
+Minecraft version, mappings, Loader, and Fabric API versions all move
+fast, and the values committed here will go stale.
+
+**Mappings note:** this currently targets Minecraft 26.2, which as of
+2026-07-19 has no Yarn or Mojang mappings published at all — its client
+jar ships unobfuscated, so `build.gradle` generates a trivial identity
+mapping instead of fetching one. `CommandBridge.java` uses the real
+(unobfuscated) class/method names for 26.2. Full story, including what to
+do once real mappings exist for whatever version you're building against,
+in `mod/BUILD_NOTES.md`.
 
 This mod targets **Java 25** (Minecraft's current toolchain requirement)
 and needs a Gradle version whose plugin API satisfies whatever
 `fabric-loom` version is current (see `mod/gradle/wrapper/gradle-wrapper.properties`
-and `mod/BUILD_NOTES.md` for what that resolved to most recently).
+and `mod/BUILD_NOTES.md` for what that resolved to most recently). Loom
+also requires the JVM running Gradle itself to be Java 25+ — if your
+default `java` is older, set `JAVA_HOME` before building (see
+`mod/BUILD_NOTES.md`).
 
 The mod has been build-verified (`./gradlew build` succeeds and produces
-a jar) but **not** smoke-tested against a live, running Minecraft client —
-see "Live-game testing" below.
+a jar) **and** live-tested against a real Fabric install (Prism Launcher):
+it now loads without crashing. `ping`/tab-completion/syntax highlighting
+against real commands (`/gamemode`, `/give`, `/tp`) still need a manual
+end-to-end pass with the CLI attached — see "Live-game testing" below.
 
 ### Live-game testing
-
-This hasn't been done yet and needs a real Fabric install (a Minecraft
-account, the game client + assets, Fabric API, and a display — none of
-which are available in a plain dev/CI sandbox). To do it yourself:
 
 1. Build the jar (above), drop it and a matching Fabric API build into a
    real `.minecraft/mods` folder, and launch the game once.
@@ -87,10 +95,10 @@ Prism/MultiMC instance folder).
 
 The CLI half of this project has been test-run in isolation (packaging,
 imports, and the full JSON wire protocol against a mock server) — see
-`cli/` for the source. The mod half is written against the Yarn API but
-hasn't been build-verified against a live Fabric toolchain yet; that's
-the main thing to shake out once you're building on a machine with
-access to Fabric's Maven.
+`cli/` for the source. The mod half now builds and has loaded
+successfully in a real Fabric install; a full CLI-attached pass against
+a live game (tab-completion, syntax highlighting, real command feedback)
+is still open — see "Live-game testing" above.
 
 ## Installing the CLI via ezinstaller
 

@@ -7,9 +7,9 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientCommandSource;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+import net.minecraft.network.chat.Component;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -23,10 +23,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * against Minecraft's client-side Brigadier dispatcher and chat/command
  * pipeline, and writes JSON responses back.
  *
- * <p>NOTE ON MAPPINGS: method names below (sendChatCommand, getCommandSource,
- * getCommandDispatcher, etc.) reflect Yarn 1.21.11+build.6 mappings.
- * Double-check these against whatever mappings version you're actually
- * building with — they occasionally get renamed between snapshots.
+ * <p>NOTE ON MAPPINGS: this Minecraft version (26.2) ships an unobfuscated
+ * client jar — there's no Yarn or Mojang mappings project for it (nothing
+ * to map), so these are just the real class/method names read directly out
+ * of the jar. See mod/BUILD_NOTES.md.
  */
 public class CommandBridge {
 
@@ -51,7 +51,7 @@ public class CommandBridge {
 
     private static void ensureMessageListenerRegistered() {
         if (LISTENER_REGISTERED.compareAndSet(false, true)) {
-            ClientReceiveMessageEvents.ALLOW_GAME.register((Text messageText, boolean overlay) -> {
+            ClientReceiveMessageEvents.ALLOW_GAME.register((Component messageText, boolean overlay) -> {
                 long now = System.currentTimeMillis();
                 RECENT_MESSAGES.add(new TimestampedMessage(now, messageText.getString()));
                 RECENT_MESSAGES.removeIf(m -> now - m.timestampMs() > BUFFER_RETENTION_MS);
@@ -77,12 +77,12 @@ public class CommandBridge {
     }
 
     private void handlePing() {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         String connected;
-        if (client.isInSingleplayer()) {
+        if (client.hasSingleplayerServer()) {
             connected = "singleplayer";
-        } else if (client.getCurrentServerEntry() != null) {
-            connected = client.getCurrentServerEntry().address;
+        } else if (client.getCurrentServer() != null) {
+            connected = client.getCurrentServer().ip;
         } else {
             connected = "unknown";
         }
@@ -101,9 +101,9 @@ public class CommandBridge {
         }
         final String command = text.startsWith("/") ? text.substring(1) : text;
 
-        MinecraftClient.getInstance().execute(() -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.player == null || client.getNetworkHandler() == null) {
+        Minecraft.getInstance().execute(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client.player == null || client.getConnection() == null) {
                 sendExecuteResult(false, "Not connected to a world.");
                 return;
             }
@@ -112,7 +112,7 @@ public class CommandBridge {
             boolean sendFailed = false;
             String sendFailureMessage = null;
             try {
-                client.getNetworkHandler().sendChatCommand(command);
+                client.getConnection().sendCommand(command);
             } catch (Exception e) {
                 sendFailed = true;
                 sendFailureMessage = "Failed to send command: " + e.getMessage();
@@ -148,9 +148,9 @@ public class CommandBridge {
             return;
         }
 
-        MinecraftClient.getInstance().execute(() -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.player == null || client.getNetworkHandler() == null) {
+        Minecraft.getInstance().execute(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client.player == null || client.getConnection() == null) {
                 JsonObject response = new JsonObject();
                 response.addProperty("type", "completion");
                 response.add("suggestions", new JsonArray());
@@ -159,10 +159,10 @@ public class CommandBridge {
             }
 
             try {
-                ClientCommandSource source = client.getNetworkHandler().getCommandSource();
-                ParseResults<ClientCommandSource> parsed =
-                        client.getNetworkHandler().getCommandDispatcher().parse(text, source);
-                Suggestions suggestions = client.getNetworkHandler().getCommandDispatcher()
+                ClientSuggestionProvider source = client.getConnection().getSuggestionsProvider();
+                ParseResults<ClientSuggestionProvider> parsed =
+                        client.getConnection().getCommands().parse(text, source);
+                Suggestions suggestions = client.getConnection().getCommands()
                         .getCompletionSuggestions(parsed)
                         .join();
 
@@ -186,14 +186,14 @@ public class CommandBridge {
     }
 
     private void handleTree() {
-        MinecraftClient.getInstance().execute(() -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.getNetworkHandler() == null) {
+        Minecraft.getInstance().execute(() -> {
+            Minecraft client = Minecraft.getInstance();
+            if (client.getConnection() == null) {
                 sendError("Not connected to a world.");
                 return;
             }
 
-            JsonObject root = nodeToJson(client.getNetworkHandler().getCommandDispatcher().getRoot());
+            JsonObject root = nodeToJson(client.getConnection().getCommands().getRoot());
             JsonObject response = new JsonObject();
             response.addProperty("type", "tree");
             response.add("root", root);
@@ -201,14 +201,14 @@ public class CommandBridge {
         });
     }
 
-    private JsonObject nodeToJson(CommandNode<ClientCommandSource> node) {
+    private JsonObject nodeToJson(CommandNode<ClientSuggestionProvider> node) {
         JsonObject json = new JsonObject();
         String kind = node instanceof LiteralCommandNode ? "literal" : "argument";
         json.addProperty("kind", kind);
         json.addProperty("name", node.getName());
 
         JsonArray children = new JsonArray();
-        for (CommandNode<ClientCommandSource> child : node.getChildren()) {
+        for (CommandNode<ClientSuggestionProvider> child : node.getChildren()) {
             children.add(nodeToJson(child));
         }
         json.add("children", children);
