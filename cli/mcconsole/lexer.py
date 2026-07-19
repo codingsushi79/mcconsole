@@ -96,6 +96,12 @@ class GameLexer(Lexer):
         return get_line
 
     def _tokenize_line(self, line: str) -> list[tuple[str, str]]:
+        if line.startswith(":"):
+            # Client-side local command (":alias ..."), never sent to the
+            # game and not part of its command tree — don't try to
+            # classify it against Brigadier, just dim the whole line.
+            return [(STYLE_SLASH, line)]
+
         result: list[tuple[str, str]] = []
 
         working = line

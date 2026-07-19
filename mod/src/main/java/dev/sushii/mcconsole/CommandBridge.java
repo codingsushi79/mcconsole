@@ -47,6 +47,11 @@ public class CommandBridge {
     // consequence any unrelated system message that happens to arrive
     // during that ~300ms window gets hidden too.
     private static volatile long suppressGameMessagesUntilMs = -1;
+    // The one CommandBridge for whichever terminal is currently attached
+    // (ConsoleServer only ever allows one client at a time), so the
+    // static message listener below has somewhere to push live chat/log
+    // lines. Null when no terminal is connected.
+    private static volatile CommandBridge activeBridge;
 
     private record TimestampedMessage(long timestampMs, String text) {
     }
@@ -56,7 +61,16 @@ public class CommandBridge {
 
     public CommandBridge(OutputStream out) {
         this.out = out;
+        activeBridge = this;
         ensureMessageListenerRegistered();
+    }
+
+    /** Called once the terminal disconnects, so a stale bridge with a
+     * closed OutputStream doesn't linger as the live-chat target. */
+    public void onDisconnect() {
+        if (activeBridge == this) {
+            activeBridge = null;
+        }
     }
 
     private static void ensureMessageListenerRegistered() {
@@ -65,7 +79,19 @@ public class CommandBridge {
                 long now = System.currentTimeMillis();
                 RECENT_MESSAGES.add(new TimestampedMessage(now, messageText.getString()));
                 RECENT_MESSAGES.removeIf(m -> now - m.timestampMs() > BUFFER_RETENTION_MS);
-                return now > suppressGameMessagesUntilMs;
+
+                boolean withinCommandFeedbackWindow = now <= suppressGameMessagesUntilMs;
+                // Messages inside a command's feedback window are already
+                // returned as part of that command's `execute` response
+                // and printed by the CLI there — pushing them again here
+                // as a live "chat" line would just double them up.
+                if (!withinCommandFeedbackWindow) {
+                    CommandBridge bridge = activeBridge;
+                    if (bridge != null) {
+                        bridge.sendChat(messageText.getString());
+                    }
+                }
+                return !withinCommandFeedbackWindow;
             });
         }
     }
@@ -269,6 +295,16 @@ public class CommandBridge {
         response.addProperty("type", "error");
         response.addProperty("message", message);
         send(response);
+    }
+
+    /** Unprompted push of a live chat/log line — see the ALLOW_GAME
+     * listener in ensureMessageListenerRegistered(). Unlike every other
+     * message type here, nothing on the CLI side requested this one. */
+    private void sendChat(String text) {
+        JsonObject message = new JsonObject();
+        message.addProperty("type", "chat");
+        message.addProperty("text", text);
+        send(message);
     }
 
     private void send(JsonObject json) {

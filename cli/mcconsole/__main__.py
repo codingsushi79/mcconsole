@@ -9,41 +9,55 @@ from pathlib import Path
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.completion import ThreadedCompleter
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
+from mcconsole.aliases import expand, load_aliases, save_aliases
 from mcconsole.completer import GameCompleter
 from mcconsole.discovery import find_port
+from mcconsole.history import history_for
 from mcconsole.lexer import GameLexer, CommandTreeIndex, MCCONSOLE_STYLE
 from mcconsole.protocol import GameConnection, NotConnectedError
 
-HISTORY_FILE = Path.home() / ".mcconsole_history"
 POLL_INTERVAL_SECONDS = 2.0
 WATCH_INTERVAL_SECONDS = 3.0
 PROMPT_ICON = "⛏"
 
 PROMPT_STYLE = Style.from_dict(MCCONSOLE_STYLE)
 ANSI_GREEN = "\033[92m"
+ANSI_CYAN = "\033[36m"
 ANSI_RESET = "\033[0m"
 
 
 class Session:
     """Holds the current GameConnection (or None while disconnected) so
     the completer/lexer closures can always see the live object without
-    needing to be rebuilt on every reconnect."""
+    needing to be rebuilt on every reconnect. Also owns the PromptSession,
+    since its history file is tied to which server we're connected to and
+    has to be swapped out (by rebuilding the whole PromptSession — its
+    history binding isn't mutable after construction) whenever that
+    changes."""
 
     def __init__(self, minecraft_dir: Path | None):
         self.minecraft_dir = minecraft_dir
         self.connection: GameConnection | None = None
         self.tree_index = CommandTreeIndex(None)
         self.server_label = "mcconsole"
+        self.prompt_session: PromptSession = self._build_prompt_session()
 
     def get_connection(self) -> GameConnection | None:
         return self.connection
 
     def get_tree_index(self) -> CommandTreeIndex:
         return self.tree_index
+
+    def _build_prompt_session(self) -> PromptSession:
+        return PromptSession(
+            history=history_for(self.server_label),
+            completer=ThreadedCompleter(GameCompleter(self.get_connection)),
+            lexer=GameLexer(self.get_tree_index),
+            style=PROMPT_STYLE,
+        )
 
     def try_connect(self) -> bool:
         found = find_port(self.minecraft_dir)
@@ -52,6 +66,7 @@ class Session:
 
         port, _path = found
         connection = GameConnection("127.0.0.1", port)
+        connection.chat_callback = _print_chat
         try:
             connection.connect()
             self.server_label = connection.ping()
@@ -62,6 +77,7 @@ class Session:
         self.connection = connection
         root = connection.tree()
         self.tree_index = CommandTreeIndex(root)
+        self.prompt_session = self._build_prompt_session()
         return True
 
     def disconnect(self) -> None:
@@ -69,6 +85,10 @@ class Session:
             self.connection.close()
         self.connection = None
         self.tree_index = CommandTreeIndex(None)
+
+    def note_server_change(self, label: str) -> None:
+        self.server_label = label
+        self.prompt_session = self._build_prompt_session()
 
 
 def info(text: str) -> None:
@@ -81,6 +101,15 @@ def success(text: str) -> None:
 
 def warn(text: str) -> None:
     print_formatted_text(FormattedText([("class:mcconsole.warn", text)]), style=PROMPT_STYLE)
+
+
+def _print_chat(text: str) -> None:
+    """Called from GameConnection's background reader thread whenever the
+    mod pushes a live chat/log line. Uses plain print() (not
+    print_formatted_text) for the same reason _watch_for_server_changes
+    does: it only interleaves safely with patch_stdout(), which main()
+    wraps the whole session in."""
+    print(f"{ANSI_CYAN}{PROMPT_ICON} {text}{ANSI_RESET}")
 
 
 def wait_for_connection(session: Session) -> None:
@@ -123,7 +152,6 @@ def _watch_for_server_changes(session: Session, connection: GameConnection) -> N
         if label == session.server_label:
             continue
 
-        session.server_label = label
         try:
             root = connection.tree()
         except NotConnectedError:
@@ -131,6 +159,7 @@ def _watch_for_server_changes(session: Session, connection: GameConnection) -> N
         if session.connection is not connection:
             return
         session.tree_index = CommandTreeIndex(root)
+        session.note_server_change(label)
         print(f"{ANSI_GREEN}{PROMPT_ICON} connected to {label}{ANSI_RESET}")
 
 
@@ -146,6 +175,51 @@ def start_watcher(session: Session) -> None:
     ).start()
 
 
+def handle_local_command(text: str, aliases: dict[str, str]) -> bool:
+    """Handles a client-side `:` command (currently just `:alias ...`),
+    which is never sent to the game. Returns True if `text` was one."""
+    if not text.startswith(":"):
+        return False
+
+    parts = text[1:].split(maxsplit=2)
+    if not parts or parts[0] != "alias":
+        warn(f"{PROMPT_ICON} unknown local command: {text.split()[0]}")
+        return True
+
+    if len(parts) == 1 or parts[1] == "list":
+        if not aliases:
+            info(f"{PROMPT_ICON} no aliases defined. Use: :alias set <name> <command>")
+        for name, expansion in sorted(aliases.items()):
+            info(f"  {name} -> {expansion}")
+        return True
+
+    action = parts[1]
+    if action == "set":
+        if len(parts) < 3 or " " not in parts[2]:
+            warn(f"{PROMPT_ICON} usage: :alias set <name> <command>")
+            return True
+        name, expansion = parts[2].split(" ", 1)
+        aliases[name] = expansion
+        save_aliases(aliases)
+        success(f"{PROMPT_ICON} alias set: {name} -> {expansion}")
+        return True
+
+    if action == "remove":
+        if len(parts) < 3:
+            warn(f"{PROMPT_ICON} usage: :alias remove <name>")
+            return True
+        name = parts[2].split()[0]
+        if aliases.pop(name, None) is not None:
+            save_aliases(aliases)
+            success(f"{PROMPT_ICON} alias removed: {name}")
+        else:
+            warn(f"{PROMPT_ICON} no such alias: {name}")
+        return True
+
+    warn(f"{PROMPT_ICON} unknown alias action: {action} (expected list/set/remove)")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="mcconsole", description=__doc__)
     parser.add_argument(
@@ -156,22 +230,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    aliases = load_aliases()
+
     session = Session(args.minecraft_dir)
     wait_for_connection(session)
     success(f"{PROMPT_ICON} connected ({session.server_label})")
     start_watcher(session)
 
-    prompt_session: PromptSession = PromptSession(
-        history=FileHistory(str(HISTORY_FILE)),
-        completer=ThreadedCompleter(GameCompleter(session.get_connection)),
-        lexer=GameLexer(session.get_tree_index),
-        style=PROMPT_STYLE,
-    )
-
     with patch_stdout():
         while True:
             try:
-                text = prompt_session.prompt(lambda: build_prompt(session))
+                text = session.prompt_session.prompt(lambda: build_prompt(session))
             except (EOFError, KeyboardInterrupt):
                 print_formatted_text(
                     FormattedText([("class:mcconsole.info", "\nmcconsole: bye")]), style=PROMPT_STYLE
@@ -180,6 +249,10 @@ def main() -> int:
 
             if not text.strip():
                 continue
+
+            if handle_local_command(text, aliases):
+                continue
+            text = expand(text, aliases)
 
             if session.connection is None or not session.connection.connected:
                 warn(f"{PROMPT_ICON} disconnected, reconnecting...")

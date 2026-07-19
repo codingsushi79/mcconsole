@@ -19,7 +19,9 @@ scripts/     build_installer.py — bundles cli/ into a single-file installer
    `.minecraft/config/mcconsole/port.json`.
 2. `mcconsole` (the CLI) reads that file to find the port, connects, and
    sends/receives newline-delimited JSON messages (`ping`, `execute`,
-   `complete`, `tree`).
+   `complete`, `tree`). The mod also pushes unprompted `chat` messages
+   whenever a chat/log line shows up in-game, which the CLI tails live in
+   the terminal.
 3. Commands you type in the terminal get sent to the game and executed
    as if typed in chat; completion and highlighting are driven by
    Brigadier's own command dispatcher, so they always match whatever
@@ -128,9 +130,11 @@ piped installs skip the prompt and use the default unless you pass one
 explicitly, e.g. `python3 mcconsole-installer.py ~/somewhere` or
 `curl ... | python3 - ~/somewhere`).
 
-It creates a venv under the install directory, installs `prompt_toolkit`
-and the CLI into it, and either appends the venv's `bin/` to your shell
-profile's `PATH` or prints the `export` line to add yourself.
+It creates a venv under the install directory and installs `prompt_toolkit`
+and the CLI into it. For PATH: on Windows it offers to add the venv's
+`Scripts\` directory to your user `PATH` via the registry (confirm with
+`Y`/`n`); on macOS/Linux it appends the venv's `bin/` to your shell
+profile, or prints the `export` line to add yourself if it can't find one.
 
 Until a release exists, build and test it locally from the repo root:
 

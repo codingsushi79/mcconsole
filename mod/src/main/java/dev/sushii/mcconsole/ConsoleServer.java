@@ -98,11 +98,12 @@ public class ConsoleServer {
     }
 
     private void handleClient(Socket socket) {
+        CommandBridge bridge = null;
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              OutputStream out = socket.getOutputStream()) {
 
-            CommandBridge bridge = new CommandBridge(out);
+            bridge = new CommandBridge(out);
 
             String line;
             while (running.get() && (line = reader.readLine()) != null) {
@@ -120,6 +121,9 @@ public class ConsoleServer {
         } catch (IOException e) {
             McConsoleClient.LOGGER.info("[MCConsole] Terminal disconnected ({})", e.getMessage());
         } finally {
+            if (bridge != null) {
+                bridge.onDisconnect();
+            }
             closeQuietly(socket);
             if (socket == activeClient) {
                 activeClient = null;
